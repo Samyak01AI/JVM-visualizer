@@ -6,6 +6,7 @@ import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.*;
+import javax.swing.text.Highlighter.HighlightPainter;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,6 +52,7 @@ public class CodeEditorPanel extends JPanel {
     private final SimpleAttributeSet styleJavaGc     = new SimpleAttributeSet(); // System.gc()
 
     private int        currentLine = -1; // 0-based; -1 = none
+    private Object     lineHighlightTag = null; // Highlighter tag for current-line background
     private boolean    updating    = false;
     private EditorMode mode        = EditorMode.SIM;
 
@@ -150,8 +152,32 @@ public class CodeEditorPanel extends JPanel {
     /** Set the currently executing line (0-based). Pass -1 to clear. */
     public void setCurrentLine(int line) {
         this.currentLine = line;
+        applyLineHighlight(line);
         gutter.repaint();
         scrollToLine(line);
+    }
+
+    /** Paints a yellow tint over the current executing line in the editor. */
+    private void applyLineHighlight(int lineIndex) {
+        Highlighter hl = editorPane.getHighlighter();
+        // Remove previous highlight
+        if (lineHighlightTag != null) {
+            hl.removeHighlight(lineHighlightTag);
+            lineHighlightTag = null;
+        }
+        if (lineIndex < 0) return;
+        try {
+            String text   = doc.getText(0, doc.getLength());
+            String[] lines = text.split("\n", -1);
+            if (lineIndex >= lines.length) return;
+            int start = 0;
+            for (int i = 0; i < lineIndex; i++) start += lines[i].length() + 1;
+            int end = start + lines[lineIndex].length();
+            // Use a solid background painter for the whole line
+            HighlightPainter painter = new DefaultHighlighter.DefaultHighlightPainter(
+                    new Color(0xFF, 0xE0, 0x60, 55)); // soft yellow tint
+            lineHighlightTag = hl.addHighlight(start, end, painter);
+        } catch (BadLocationException ignored) {}
     }
 
     public void clearHighlight() { setCurrentLine(-1); }
@@ -387,33 +413,50 @@ public class CodeEditorPanel extends JPanel {
             g2.setColor(Theme.BORDER);
             g2.drawLine(getWidth() - 1, 0, getWidth() - 1, getHeight());
 
-            FontMetrics fm;
-            try { fm = editorPane.getFontMetrics(Theme.FONT_MONO_SM); }
-            catch (Exception e) { return; }
-
+            FontMetrics fm = editorPane.getFontMetrics(editorPane.getFont());
             int lineHeight = fm.getHeight();
             Rectangle viewRect = scroll.getViewport().getViewRect();
-            int startLine = viewRect.y / lineHeight;
-            int endLine   = (viewRect.y + viewRect.height) / lineHeight + 1;
 
+            String[] lines;
             try {
-                String[] lines = doc.getText(0, doc.getLength()).split("\n", -1);
-                endLine = Math.min(endLine, lines.length);
-            } catch (BadLocationException ignored) {}
+                lines = doc.getText(0, doc.getLength()).split("\n", -1);
+            } catch (BadLocationException e) { return; }
 
-            for (int i = startLine; i < endLine; i++) {
-                int y = (i * lineHeight) - viewRect.y + fm.getAscent() + 4;
+            // Build cumulative char offsets so we can call modelToView per line
+            int[] offsets = new int[lines.length];
+            int off = 0;
+            for (int i = 0; i < lines.length; i++) {
+                offsets[i] = off;
+                off += lines[i].length() + 1;
+            }
+
+            for (int i = 0; i < lines.length; i++) {
+                // Get actual Y of this line using the model position
+                Rectangle lineRect;
+                try {
+                    lineRect = editorPane.modelToView(offsets[i]);
+                } catch (BadLocationException e) { continue; }
+                if (lineRect == null) continue;
+
+                int lineY = lineRect.y - viewRect.y;
+                // Skip lines outside visible area
+                if (lineY + lineHeight < 0 || lineY > viewRect.height) continue;
+
+                int baseline = lineY + fm.getAscent();
+
                 if (i == currentLine) {
+                    // Yellow tint row in gutter
                     g2.setColor(Theme.LINE_HIGHLIGHT);
-                    g2.fillRect(0, (i * lineHeight) - viewRect.y, getWidth() - 1, lineHeight);
+                    g2.fillRect(0, lineY, getWidth() - 1, lineRect.height > 0 ? lineRect.height : lineHeight);
+                    // Arrow indicator
                     g2.setColor(Theme.ACCENT_BLUE);
-                    g2.setFont(Theme.FONT_MONO_SM.deriveFont(Font.BOLD));
-                    g2.drawString("▶", 4, y);
+                    g2.setFont(editorPane.getFont().deriveFont(Font.BOLD, 11f));
+                    g2.drawString("▶", 4, baseline);
                 } else {
                     g2.setColor(Theme.TEXT_MUTED);
-                    g2.setFont(Theme.FONT_MONO_SM);
+                    g2.setFont(editorPane.getFont().deriveFont(Font.PLAIN, 11f));
                     String num = String.valueOf(i + 1);
-                    g2.drawString(num, getWidth() - 8 - fm.stringWidth(num), y);
+                    g2.drawString(num, getWidth() - 8 - fm.stringWidth(num), baseline);
                 }
             }
         }

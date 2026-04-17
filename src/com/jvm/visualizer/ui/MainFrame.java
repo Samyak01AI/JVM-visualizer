@@ -47,6 +47,7 @@ public class MainFrame extends JFrame {
     private int currentStepLine = 0;
     private List<String> effectiveLines = null; // translated (or raw) lines for current run
     private boolean lastRunWasJava = false;
+    private List<Integer> sourceLineMap = null; // maps translated line index → Java source line index
 
     public MainFrame() {
         super("🧠 JVM Memory Management Simulator");
@@ -200,6 +201,7 @@ public class MainFrame extends JFrame {
         if (lastRunWasJava) {
             JavaToSimTranslator translator = new JavaToSimTranslator();
             effectiveLines = translator.translate(editorLines);
+            sourceLineMap  = translator.getSourceLineMap();
 
             logPanel.log("info", "☕  Java code detected — translating to " + effectiveLines.size() + " sim commands");
             logPanel.log("info", "── Translated script ──────────────────────────────────────────");
@@ -216,6 +218,7 @@ public class MainFrame extends JFrame {
             logPanel.log("info", "── Running translated script ───────────────────────────────────");
         } else {
             effectiveLines = editorLines;
+            sourceLineMap  = null;
         }
     }
 
@@ -229,9 +232,7 @@ public class MainFrame extends JFrame {
         editorPanel.clearHighlight();
 
         for (int i = 0; i < effectiveLines.size(); i++) {
-            // Only highlight editor line when in sim mode (direct mapping)
-            if (!lastRunWasJava)
-                editorPanel.setCurrentLine(i);
+            highlightEditorLine(i);
             execLine(effectiveLines.get(i), i + 1);
         }
 
@@ -257,9 +258,7 @@ public class MainFrame extends JFrame {
         }
 
         String line = effectiveLines.get(currentStepLine);
-        // Only highlight editor if in sim mode (direct line mapping)
-        if (!lastRunWasJava)
-            editorPanel.setCurrentLine(currentStepLine);
+        highlightEditorLine(currentStepLine);
         lineLabel.setText("Line: " + (currentStepLine + 1) + " / " + effectiveLines.size());
         statsPanel.setStatus("Stepped to line " + (currentStepLine + 1));
 
@@ -308,6 +307,24 @@ public class MainFrame extends JFrame {
         }
     }
 
+    /**
+     * Highlight the correct editor line for the given effective-line index.
+     * In sim-script mode: direct 1:1 mapping.
+     * In Java mode: use the sourceLineMap to find the original Java source line.
+     */
+    private void highlightEditorLine(int effectiveIndex) {
+        if (lastRunWasJava && sourceLineMap != null) {
+            if (effectiveIndex >= 0 && effectiveIndex < sourceLineMap.size()) {
+                int javaLine = sourceLineMap.get(effectiveIndex);
+                if (javaLine >= 0) {
+                    editorPanel.setCurrentLine(javaLine);
+                }
+            }
+        } else {
+            editorPanel.setCurrentLine(effectiveIndex);
+        }
+    }
+
     private void reset(JLabel lineLabel) {
         heap.reset();
         stackMgr.reset();
@@ -315,6 +332,7 @@ public class MainFrame extends JFrame {
         currentStepLine = 0;
         effectiveLines = null;
         lastRunWasJava = false;
+        sourceLineMap = null;
         editorPanel.clearHighlight();
         logPanel.clear();
         logPanel.log("info", "🔄 Simulation reset.");

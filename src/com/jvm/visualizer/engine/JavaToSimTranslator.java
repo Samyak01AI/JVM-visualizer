@@ -3,6 +3,7 @@ package com.jvm.visualizer.engine;
 import java.util.*;
 import java.util.regex.*;
 
+
 /**
  * Translates a subset of real Java source code into JVM Visualizer sim-script.
  *
@@ -98,6 +99,16 @@ public class JavaToSimTranslator {
     private final Deque<String>  methodNames     = new ArrayDeque<>();
     private int braceDepth = 0;
 
+    /**
+     * After calling translate(), this list has one entry per output line.
+     * Each entry is the 0-based index of the Java source line that produced it,
+     * or -1 for the header comment line.
+     */
+    private final List<Integer> sourceLineMap = new ArrayList<>();
+
+    /** Returns the source-line map produced by the last translate() call. */
+    public List<Integer> getSourceLineMap() { return Collections.unmodifiableList(sourceLineMap); }
+
     // ─────────────────────────────────────────────────────────────────────────
     // PUBLIC API
     // ─────────────────────────────────────────────────────────────────────────
@@ -140,19 +151,29 @@ public class JavaToSimTranslator {
         methodDepths.clear();
         methodNames.clear();
         braceDepth = 0;
+        sourceLineMap.clear();
 
         List<String> result = new ArrayList<>();
+        // Header line maps to no source line
         result.add("// ── Auto-translated from Java ──────────────────────────");
+        sourceLineMap.add(-1);
 
-        for (String raw : javaLines) {
+        for (int srcIdx = 0; srcIdx < javaLines.size(); srcIdx++) {
+            String raw  = javaLines.get(srcIdx);
             String line = raw.trim();
 
             /* empty */
-            if (line.isEmpty()) { result.add(""); continue; }
+            if (line.isEmpty()) {
+                result.add("");
+                sourceLineMap.add(srcIdx);
+                continue;
+            }
 
             /* pass-through comments */
             if (line.startsWith("//") || line.startsWith("/*") || line.startsWith("*")) {
-                result.add(line); continue;
+                result.add(line);
+                sourceLineMap.add(srcIdx);
+                continue;
             }
 
             /* skip package / import / annotations */
@@ -164,9 +185,12 @@ public class JavaToSimTranslator {
                 continue;
             }
 
-            /* translate */
+            /* translate — each emitted sim line maps back to srcIdx */
             List<String> translated = translateLine(line);
-            result.addAll(translated);
+            for (String t : translated) {
+                result.add(t);
+                sourceLineMap.add(srcIdx);
+            }
         }
 
         return result;
